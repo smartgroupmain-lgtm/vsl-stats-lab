@@ -24,7 +24,7 @@ function addPoint(state, set, winnerTeamId, reason, eventId = null, administrati
     set.servingTeamId = winnerTeamId
     set.rotations[winnerTeamId] = ((set.rotations[winnerTeamId] || 0) + 1) % 6
   }
-  const rally = { id: rallyId, number: set.rallies.length + 1, winnerTeamId, reason, eventId, administrative, voided: false, recordedAt: new Date().toISOString() }
+  const rally = { id: rallyId, number: set.rallies.length + 1, winnerTeamId, reason, eventId, administrative, scoreAfter: { ...set.score }, voided: false, recordedAt: new Date().toISOString() }
   set.rallies.push(rally)
   return rally
 }

@@ -1,0 +1,41 @@
+const playerText = player => player ? `№${player.jerseyNumber ?? '—'} ${player.displayName}` : 'игрок не указан'
+
+function actionLines(rally, event, rosterById) {
+  if (!event) {
+    if (rally.reason === 'unknown') return ['Очко без указанного автора']
+    if (rally.reason?.startsWith('penalty:')) return ['Штрафное очко']
+    return ['Причина очка не указана']
+  }
+  const actor = playerText(rosterById[event.actorId])
+  if (event.skill === 'attack' && event.result === 'point') {
+    const assist = event.assistId ? `Пас: ${playerText(rosterById[event.assistId])}` : event.assistStatus === 'none' ? 'Пас: без ассиста' : 'Пас: не указан'
+    return [`Атака: гол — ${actor}`, assist]
+  }
+  if (event.skill === 'serve' && event.result === 'ace') return [`Эйс — ${actor}`]
+  if (event.skill === 'block' && event.result === 'point') return [`Блок — ${actor}`]
+  if (event.skill === 'serve' && event.result === 'error') return [`Ошибка на подаче — ${actor}`]
+  if (event.skill === 'attack' && event.result === 'error') return [`Ошибка в атаке — ${actor}`]
+  return [`${event.skill}: ${event.result} — ${actor}`]
+}
+
+export function buildJournalRows(state) {
+  const rosterById = Object.fromEntries(state.roster.map(player => [player.id, player]))
+  const eventsById = Object.fromEntries(state.events.filter(event => !event.voided).map(event => [event.id, event]))
+  const teamNames = Object.fromEntries(state.teams.map(team => [team.id, team.name]))
+  return state.sets.flatMap(set => {
+    const runningScore = Object.fromEntries(state.teams.map(team => [team.id, 0]))
+    return set.rallies.filter(rally => !rally.voided).map(rally => {
+      runningScore[rally.winnerTeamId] = (runningScore[rally.winnerTeamId] || 0) + 1
+      const scoreAfter = rally.scoreAfter || { ...runningScore }
+      return {
+        ...rally,
+        setNumber: set.number,
+        winnerName: teamNames[rally.winnerTeamId] || 'Команда',
+        scoreAfter,
+        scoreLabel: `${scoreAfter[state.teams[0].id] || 0} : ${scoreAfter[state.teams[1].id] || 0}`,
+        scoreWithTeams: `${state.teams[0].name} ${scoreAfter[state.teams[0].id] || 0} : ${scoreAfter[state.teams[1].id] || 0} ${state.teams[1].name}`,
+        actionLines: actionLines(rally, eventsById[rally.eventId], rosterById),
+      }
+    })
+  }).reverse()
+}

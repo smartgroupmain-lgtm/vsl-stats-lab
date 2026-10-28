@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyCommand, createEmptyState, DomainError } from '../lib/match-engine/reducer.js'
 import { CommandType } from '../lib/match-engine/commands.js'
 import { calculateStats } from '../lib/match-engine/statistics.js'
+import { buildJournalRows } from '../lib/match-engine/journal.js'
 import { replay } from '../lib/match-engine/replay.js'
 
 const teams = [{ id: 'A', name: 'A' }, { id: 'B', name: 'B' }]
@@ -26,6 +27,16 @@ describe('match engine', () => {
     state = applyCommand(state, command(CommandType.ASSIGN_ASSIST, { attackEventId: attack.id, assisterId: 'p2' }, 'assist')).nextState
     expect(calculateStats(state).find(x => x.playerId === 'p1').attackPoints).toBe(1)
     expect(calculateStats(state).find(x => x.playerId === 'p2').assists).toBe(1)
+    expect(buildJournalRows(state)[0]).toMatchObject({ setNumber: 1, number: 1, scoreLabel: '1 : 0', winnerName: 'A' })
+    expect(buildJournalRows(state)[0].actionLines).toEqual(['Атака: гол — №1 Attacker', 'Пас: №2 Setter'])
+  })
+  it('shows a running score and readable action for every rally', () => {
+    let state = initial('A')
+    state = applyCommand(state, command(CommandType.RECORD_TERMINAL_ACTION, { actorId: 'p1', teamId: 'A', skill: 'serve', result: 'ace', winnerTeamId: 'A' }, 'ace')).nextState
+    state = applyCommand(state, command(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: 'B' }, 'unknown')).nextState
+    const rows = buildJournalRows(state)
+    expect(rows[0]).toMatchObject({ number: 2, scoreLabel: '1 : 1', winnerName: 'B', actionLines: ['Очко без указанного автора'] })
+    expect(rows[1]).toMatchObject({ number: 1, scoreLabel: '1 : 0', actionLines: ['Эйс — №1 Attacker'] })
   })
   it('does not rotate when serving team wins', () => {
     let state = initial('A')
