@@ -1,10 +1,20 @@
 const playerText = player => player ? `№${player.jerseyNumber ?? '—'} ${player.displayName}` : 'игрок не указан'
 
-function actionLines(rally, event, rosterById) {
+const skillNames = { serve: 'Подача', reception: 'Приём', set: 'Пас', attack: 'Атака', block: 'Блок' }
+const resultNames = {
+  ace: 'эйс', pressure: 'усложнил', normal: 'норм', error: 'ошибка', shanked: 'сорван', ideal: 'идеальный',
+  emergency: 'авария', workable: 'рабочий', point: 'очко', in_play: 'в игре', block_covered: 'блок плюс',
+  blocked_point: 'блок минус', softened: 'смягчил', to_opponent: 'сопернику', block_out: 'блок-аут',
+}
+
+function actionLines(rally, event, rosterById, sequence = []) {
   if (!event) {
     if (rally.reason === 'unknown') return ['Очко без указанного автора']
     if (rally.reason?.startsWith('penalty:')) return ['Штрафное очко']
     return ['Причина очка не указана']
+  }
+  if (sequence.length > 1 || event.sourceCommandId && sequence.some(item => item.skill === 'set' || !['point', 'ace', 'error'].includes(item.result))) {
+    return sequence.map(item => `${skillNames[item.skill] || item.skill}: ${resultNames[item.result] || item.result} — ${playerText(rosterById[item.actorId])}${item.assist ? ' · голевой пас' : ''}`)
   }
   const actor = playerText(rosterById[event.actorId])
   if (event.skill === 'attack' && event.result === 'point') {
@@ -34,7 +44,7 @@ export function buildJournalRows(state) {
         scoreAfter,
         scoreLabel: `${scoreAfter[state.teams[0].id] || 0} : ${scoreAfter[state.teams[1].id] || 0}`,
         scoreWithTeams: `${state.teams[0].name} ${scoreAfter[state.teams[0].id] || 0} : ${scoreAfter[state.teams[1].id] || 0} ${state.teams[1].name}`,
-        actionLines: actionLines(rally, eventsById[rally.eventId], rosterById),
+        actionLines: actionLines(rally, eventsById[rally.eventId], rosterById, state.events.filter(event => !event.voided && event.setId === set.id && event.rallyNumber === rally.number && !['substitution', 'libero-replacement'].includes(event.skill))),
       }
     })
   }).reverse()

@@ -87,4 +87,42 @@ describe('match engine', () => {
     state = applyCommand(state, command(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: 'A' }, 'a26')).nextState
     expect(applyCommand(state, command(CommandType.FINISH_SET)).nextState.sets[0].winnerTeamId).toBe('A')
   })
+  it('keeps detailed nonterminal actions in one unfinished rally without changing score', () => {
+    let state = initial('A')
+    state = applyCommand(state, command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p1', teamId: 'A', skill: 'serve', result: 'pressure' }, 'pressure')).nextState
+    state = applyCommand(state, command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p1', teamId: 'A', skill: 'block', result: 'to_opponent' }, 'opponent')).nextState
+    expect(state.sets[0].score).toEqual({ A: 0, B: 0 })
+    expect(state.events.map(event => event.rallyNumber)).toEqual([1, 1])
+    expect(calculateStats(state).find(row => row.playerId === 'p1').detailed.block.to_opponent).toBe(1)
+  })
+  it('makes the latest pass ideal and assigns the assist when a linked attack scores', () => {
+    let state = initial('B')
+    state = applyCommand(state, command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p2', teamId: 'A', skill: 'set', result: 'workable' }, 'pass')).nextState
+    state = applyCommand(state, command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p1', teamId: 'A', skill: 'attack', result: 'point' }, 'attack')).nextState
+    expect(state.sets[0].score.A).toBe(1)
+    expect(state.events[0]).toMatchObject({ result: 'ideal', enteredResult: 'workable', assist: true, linkedAttackId: 'attack:event' })
+    expect(state.events[1]).toMatchObject({ assistId: 'p2', assistStatus: 'assigned' })
+    expect(calculateStats(state).find(row => row.playerId === 'p2')).toMatchObject({ assists: 1 })
+    expect(buildJournalRows(state)[0].actionLines).toEqual(['Пас: идеальный — №2 Setter · голевой пас', 'Атака: очко — №1 Attacker'])
+  })
+  it('does not assign an assist when another team contact follows the pass', () => {
+    let state = initial()
+    state = applyCommand(state, command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p2', teamId: 'A', skill: 'set', result: 'workable' }, 'pass')).nextState
+    state = applyCommand(state, command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p1', teamId: 'A', skill: 'block', result: 'softened' }, 'touch')).nextState
+    state = applyCommand(state, command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p1', teamId: 'A', skill: 'attack', result: 'point' }, 'attack')).nextState
+    expect(state.events[0].result).toBe('workable')
+    expect(state.events[0].assist).toBeUndefined()
+    expect(state.events[2].assistId).toBeNull()
+  })
+  it('maps every detailed terminal result to the correct team', () => {
+    const cases = [
+      ['serve', 'ace', 'A'], ['serve', 'error', 'B'], ['reception', 'error', 'B'], ['set', 'error', 'B'],
+      ['attack', 'point', 'A'], ['attack', 'blocked_point', 'B'], ['attack', 'error', 'B'],
+      ['block', 'point', 'A'], ['block', 'block_out', 'B'], ['block', 'error', 'B'],
+    ]
+    for (const [skill, result, winner] of cases) {
+      const state = applyCommand(initial(), command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p1', teamId: 'A', skill, result })).nextState
+      expect(state.sets[0].score[winner], `${skill}:${result}`).toBe(1)
+    }
+  })
 })

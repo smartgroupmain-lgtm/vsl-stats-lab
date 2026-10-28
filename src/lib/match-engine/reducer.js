@@ -10,6 +10,17 @@ function currentSet(state) {
 }
 function rosterPlayer(state, id) { return state.roster.find(p => p.id === id) }
 function otherTeam(state, teamId) { return state.teams.find(t => t.id !== teamId)?.id }
+const detailedTerminalWinner = (state, teamId, skill, result) => {
+  const ownPoint = (skill === 'serve' && result === 'ace') || (skill === 'attack' && result === 'point') || (skill === 'block' && result === 'point')
+  const opponentPoint = (
+    (skill === 'serve' && result === 'error') ||
+    (skill === 'reception' && result === 'error') ||
+    (skill === 'set' && result === 'error') ||
+    (skill === 'attack' && ['blocked_point', 'error'].includes(result)) ||
+    (skill === 'block' && ['block_out', 'error'].includes(result))
+  )
+  return ownPoint ? teamId : opponentPoint ? otherTeam(state, teamId) : null
+}
 export function setWinner(state, set) {
   const target = set.number === state.rules.setsToWin * 2 - 1 ? state.rules.decidingTarget : state.rules.regularTarget
   const [a, b] = state.teams.map(t => set.score[t.id] || 0)
@@ -55,6 +66,25 @@ export function applyCommand(input, command) {
       state.events.push(event)
       const winner = p.winnerTeamId || (p.result === 'error' ? otherTeam(state, p.teamId) : p.teamId)
       addPoint(state, set, winner, `${p.skill}:${p.result}`, event.id, false, `${command.commandId}:rally`)
+      break
+    }
+    case CommandType.RECORD_DETAILED_ACTION: {
+      const set = currentSet(state); const actor = rosterPlayer(state, p.actorId)
+      if (!actor) throw new DomainError('BAD_PLAYER', 'Игрок не найден')
+      if (actor.teamId !== p.teamId) throw new DomainError('BAD_TEAM', 'Игрок относится к другой команде')
+      const winner = detailedTerminalWinner(state, p.teamId, p.skill, p.result)
+      const event = { id: `${command.commandId}:event`, sourceCommandId: command.commandId, setId: set.id, rallyNumber: set.rallies.length + 1, teamId: p.teamId, actorId: p.actorId, skill: p.skill, result: p.result, assistId: null, voided: false, recordedAt: command.recordedAt }
+      if (p.skill === 'attack' && p.result === 'point') {
+        const previous = [...state.events].reverse().find(candidate => !candidate.voided && candidate.setId === set.id && candidate.rallyNumber === event.rallyNumber)
+        if (previous?.teamId === p.teamId && previous.skill === 'set') {
+          const pass = previous
+          pass.enteredResult ||= pass.result
+          pass.result = 'ideal'; pass.assist = true; pass.linkedAttackId = event.id
+          event.assistId = pass.actorId; event.assistStatus = 'assigned'
+        }
+      }
+      state.events.push(event)
+      if (winner) addPoint(state, set, winner, `${p.skill}:${p.result}`, event.id, false, `${command.commandId}:rally`)
       break
     }
     case CommandType.RECORD_UNKNOWN_POINT: addPoint(state, currentSet(state), p.winnerTeamId, 'unknown', null, false, `${command.commandId}:rally`); break
