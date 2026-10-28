@@ -1,0 +1,52 @@
+name: Deploy VSL Stats Lab
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+      - run: pnpm lint
+      - run: pnpm build
+        env:
+          VITE_APP_MODE: lab
+          VITE_VSL_SOURCE_URL: ${{ secrets.VITE_VSL_SOURCE_URL }}
+          VITE_VSL_SOURCE_PUBLIC_KEY: ${{ secrets.VITE_VSL_SOURCE_PUBLIC_KEY }}
+          VITE_STATS_LAB_ACCESS_KEY: ${{ secrets.VITE_STATS_LAB_ACCESS_KEY }}
+          VITE_VSL_ASSET_BASE_URL: https://vsl-league.vercel.app
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

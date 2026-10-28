@@ -1,0 +1,11 @@
+export const CommandType = Object.freeze({
+  CREATE_MATCH: 'CREATE_MATCH', START_SET: 'START_SET', RECORD_TERMINAL_ACTION: 'RECORD_TERMINAL_ACTION',
+  RECORD_UNKNOWN_POINT: 'RECORD_UNKNOWN_POINT', ASSIGN_ASSIST: 'ASSIGN_ASSIST',
+  RECORD_LIBERO_ASSESSMENT: 'RECORD_LIBERO_ASSESSMENT', SUBSTITUTE_PLAYER: 'SUBSTITUTE_PLAYER',
+  REPLACE_LIBERO: 'REPLACE_LIBERO', RECORD_TIMEOUT: 'RECORD_TIMEOUT', RECORD_PENALTY: 'RECORD_PENALTY',
+  FINISH_SET: 'FINISH_SET', FINISH_MATCH: 'FINISH_MATCH', UNDO: 'UNDO', REDO: 'REDO',
+})
+
+export function makeCommand(type, matchId, expectedRevision, payload = {}) {
+  return { commandId: crypto.randomUUID(), matchId, expectedRevision, type, payload, recordedAt: new Date().toISOString() }
+}

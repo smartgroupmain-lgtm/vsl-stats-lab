@@ -1,0 +1,79 @@
+import { describe, expect, it } from 'vitest'
+import { applyCommand, createEmptyState, DomainError } from '../lib/match-engine/reducer.js'
+import { CommandType } from '../lib/match-engine/commands.js'
+import { calculateStats } from '../lib/match-engine/statistics.js'
+import { replay } from '../lib/match-engine/replay.js'
+
+const teams = [{ id: 'A', name: 'A' }, { id: 'B', name: 'B' }]
+const roster = [
+  { id: 'p1', teamId: 'A', displayName: 'Attacker', jerseyNumber: 1, matchRole: 'player' },
+  { id: 'p2', teamId: 'A', displayName: 'Setter', jerseyNumber: 2, matchRole: 'setter' },
+  { id: 'p3', teamId: 'A', displayName: 'Libero', jerseyNumber: 3, matchRole: 'libero' },
+  { id: 'q1', teamId: 'B', displayName: 'Opponent', jerseyNumber: 4, matchRole: 'player' },
+]
+const command = (type, payload = {}, commandId = crypto.randomUUID()) => ({ commandId, matchId: 'm', type, payload, recordedAt: '2026-10-28T10:00:00Z' })
+function initial(serving = 'B') {
+  let state = applyCommand(createEmptyState(), command(CommandType.CREATE_MATCH, { meta: { title: 'A — B' }, rules: {}, teams, roster }, 'create')).nextState
+  return applyCommand(state, command(CommandType.START_SET, { servingTeamId: serving, lineups: { A: ['p1','p2','p3'], B: ['q1'] } }, 'start')).nextState
+}
+
+describe('match engine', () => {
+  it('scores an attack, rotates on sideout and assigns one assist', () => {
+    let state = initial('B')
+    state = applyCommand(state, command(CommandType.RECORD_TERMINAL_ACTION, { actorId: 'p1', teamId: 'A', skill: 'attack', result: 'point', winnerTeamId: 'A' }, 'attack')).nextState
+    expect(state.sets[0].score.A).toBe(1); expect(state.sets[0].servingTeamId).toBe('A'); expect(state.sets[0].rotations.A).toBe(1)
+    const attack = state.events.find(e => e.skill === 'attack')
+    state = applyCommand(state, command(CommandType.ASSIGN_ASSIST, { attackEventId: attack.id, assisterId: 'p2' }, 'assist')).nextState
+    expect(calculateStats(state).find(x => x.playerId === 'p1').attackPoints).toBe(1)
+    expect(calculateStats(state).find(x => x.playerId === 'p2').assists).toBe(1)
+  })
+  it('does not rotate when serving team wins', () => {
+    let state = initial('A')
+    state = applyCommand(state, command(CommandType.RECORD_TERMINAL_ACTION, { actorId: 'p1', teamId: 'A', skill: 'serve', result: 'ace', winnerTeamId: 'A' })).nextState
+    expect(state.sets[0].rotations.A).toBe(0)
+  })
+  it('libero plus/minus never changes score', () => {
+    let state = initial()
+    for (let i=0;i<12;i++) state = applyCommand(state, command(CommandType.RECORD_LIBERO_ASSESSMENT, { rosterEntryId: 'p3', sign: 'positive' })).nextState
+    for (let i=0;i<4;i++) state = applyCommand(state, command(CommandType.RECORD_LIBERO_ASSESSMENT, { rosterEntryId: 'p3', sign: 'negative' })).nextState
+    expect(state.sets[0].score).toEqual({ A: 0, B: 0 })
+    expect(calculateStats(state).find(x => x.playerId === 'p3')).toMatchObject({ liberoPositive: 12, liberoNegative: 4, liberoBalance: 8 })
+  })
+  it('rejects self and opponent assists', () => {
+    let state = initial()
+    state = applyCommand(state, command(CommandType.RECORD_TERMINAL_ACTION, { actorId: 'p1', teamId: 'A', skill: 'attack', result: 'point' })).nextState
+    const id = state.events[0].id
+    expect(() => applyCommand(state, command(CommandType.ASSIGN_ASSIST, { attackEventId: id, assisterId: 'p1' }))).toThrow(DomainError)
+    expect(() => applyCommand(state, command(CommandType.ASSIGN_ASSIST, { attackEventId: id, assisterId: 'q1' }))).toThrow(DomainError)
+  })
+  it('undo removes attack and linked assist on replay', () => {
+    const commands = [
+      command(CommandType.CREATE_MATCH, { meta: {}, rules: {}, teams, roster }, 'create'),
+      command(CommandType.START_SET, { servingTeamId: 'B', lineups: {} }, 'start'),
+      command(CommandType.RECORD_TERMINAL_ACTION, { actorId: 'p1', teamId: 'A', skill: 'attack', result: 'point' }, 'attack'),
+      command(CommandType.UNDO, { targetCommandId: 'attack' }, 'undo'),
+    ]
+    const state = replay(commands)
+    expect(state.sets[0].score.A).toBe(0); expect(state.events).toHaveLength(0)
+  })
+  it('keeps event ids stable during replay so assists survive', () => {
+    const commands = [
+      command(CommandType.CREATE_MATCH, { meta: {}, rules: { setsToWin: 3, regularTarget: 25, decidingTarget: 15, advantage: 2 }, teams, roster }, 'create'),
+      command(CommandType.START_SET, { servingTeamId: 'B', lineups: {} }, 'start'),
+      command(CommandType.RECORD_TERMINAL_ACTION, { actorId: 'p1', teamId: 'A', skill: 'attack', result: 'point' }, 'attack'),
+      command(CommandType.ASSIGN_ASSIST, { attackEventId: 'attack:event', assisterId: 'p2' }, 'assist'),
+    ]
+    const state = replay(commands)
+    expect(state.events[0].id).toBe('attack:event')
+    expect(calculateStats(state).find(x => x.playerId === 'p2').assists).toBe(1)
+  })
+  it('requires target score and two-point advantage to finish a set', () => {
+    let state = initial('A'); state.rules = { setsToWin: 3, regularTarget: 25, decidingTarget: 15, advantage: 2 }
+    for (let i=0;i<24;i++) state = applyCommand(state, command(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: 'A' }, `a${i}`)).nextState
+    for (let i=0;i<24;i++) state = applyCommand(state, command(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: 'B' }, `b${i}`)).nextState
+    state = applyCommand(state, command(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: 'A' }, 'a25')).nextState
+    expect(() => applyCommand(state, command(CommandType.FINISH_SET))).toThrow(/преимуществом/)
+    state = applyCommand(state, command(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: 'A' }, 'a26')).nextState
+    expect(applyCommand(state, command(CommandType.FINISH_SET)).nextState.sets[0].winnerTeamId).toBe('A')
+  })
+})
