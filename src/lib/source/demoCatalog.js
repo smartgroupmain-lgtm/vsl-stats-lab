@@ -9,8 +9,8 @@ export const demoCatalog = {
 
 export function demoRoster(teamId, seasonId, teamSnapshotId) {
   const names = teamId === 'demo-a'
-    ? ['Алексей Орлов', 'Иван Соколов', 'Дамир Алиев', 'Максим Романов', 'Антон Волков', 'Павел Миронов', 'Илья Лебедев']
-    : ['Рустам Каримов', 'Тимур Юсупов', 'Арсен Ким', 'Олег Белов', 'Саид Азимов', 'Егор Петров', 'Марат Нуров']
+    ? ['Алексей Орлов', 'Иван Соколов', 'Дамир Алиев', 'Максим Романов', 'Антон Волков', 'Павел Миронов', 'Илья Лебедев', 'Никита Зайцев', 'Роман Фролов', 'Артём Козлов']
+    : ['Рустам Каримов', 'Тимур Юсупов', 'Арсен Ким', 'Олег Белов', 'Саид Азимов', 'Егор Петров', 'Марат Нуров', 'Денис Хан', 'Амир Усманов', 'Вадим Попов']
   return names.map((displayName, index) => ({
     id: crypto.randomUUID(), sourcePlayerId: null, sourceMembershipId: null,
     teamId: teamSnapshotId, sourceTeamId: teamId, sourceSeasonId: seasonId,

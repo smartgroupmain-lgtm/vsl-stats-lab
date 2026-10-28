@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
 import { config } from './config.js'
-import LabBanner from './components/LabBanner.jsx'
 import UpdateBanner from './components/UpdateBanner.jsx'
 import { createReadOnlyTransport } from './lib/source/readonlyTransport.js'
 import { createCatalogReader, mapRoster } from './lib/source/vslCatalogReader.js'
@@ -22,6 +21,24 @@ const sourceReader = (() => {
 const teamLabel = team => team?.name || 'Команда'
 const playerLabel = player => `${player.jerseyNumber != null ? `№${player.jerseyNumber} ` : ''}${player.displayName}`
 const normalizeMatchRole = role => role === 'setter' || role === 'libero' ? role : 'player'
+function initializeMatchRoster(roster) {
+  const normalized = roster.map(player => ({ ...player, matchRole: normalizeMatchRole(player.matchRole), available: player.active, starter: false }))
+  const initialStarters = new Set([
+    ...normalized.filter(player => player.available && player.matchRole !== 'libero').slice(0, 6).map(player => player.id),
+    ...normalized.filter(player => player.available && player.matchRole === 'libero').slice(0, 1).map(player => player.id),
+  ])
+  return normalized.map(player => ({ ...player, starter: initialStarters.has(player.id) }))
+}
+function lineupCounts(roster) {
+  const available = roster.filter(player => player.active && player.available)
+  return {
+    available: available.length,
+    court: available.filter(player => player.starter && player.matchRole !== 'libero').length,
+    libero: available.filter(player => player.starter && player.matchRole === 'libero').length,
+    setters: available.filter(player => player.matchRole === 'setter').length,
+  }
+}
+const rosterReady = roster => { const counts = lineupCounts(roster); return counts.available >= 7 && counts.court === 6 && counts.libero === 1 && counts.setters >= 1 }
 
 function Spinner() { return <div className="spinner" aria-label="Загрузка" /> }
 function SaveMark({ status }) { return <span className={`save-mark ${status}`}>{status === 'saving' ? 'Сохраняется…' : status === 'server-error' ? 'На устройстве · сервер недоступен' : status === 'error' ? 'Не сохранено' : 'Сохранено на сервере'}</span> }
@@ -35,9 +52,9 @@ function Home({ matches, onNew, onOpen, onImport, onDelete }) {
   </main>
 }
 
-function RoleRoster({ roster, team, onRoleChange }) {
-  const activeRoster = roster.filter(p => p.active)
-  return <div className="role-team"><div className="role-team-head"><h3>{team.name}</h3><span>{activeRoster.filter(p => p.matchRole === 'setter').length} связ. · {activeRoster.filter(p => p.matchRole === 'libero').length} либеро</span></div><div className="role-roster">{activeRoster.map(p => <label key={p.id} className={`role-player ${p.matchRole}`}><span><b>№{p.jerseyNumber ?? '—'}</b> {p.displayName}</span><select aria-label={`Роль ${p.displayName}`} value={p.matchRole} onChange={e => onRoleChange(p.id, e.target.value)}><option value="player">Игрок</option><option value="setter">Связующий</option><option value="libero">Либеро</option></select></label>)}</div></div>
+function RoleRoster({ roster, team, onRoleChange, onAvailabilityChange, onStarterChange }) {
+  const sourceRoster = roster.filter(player => player.active); const counts = lineupCounts(roster)
+  return <div className="role-team"><div className="role-team-head"><h3>{team.name}</h3><span>В матче {counts.available} · старт {counts.court}+{counts.libero} · связ. {counts.setters}</span></div><div className="role-roster">{sourceRoster.map(player => <div key={player.id} className={`role-player ${player.matchRole} ${player.available ? '' : 'absent'} ${player.starter ? 'starter' : ''}`}><span><b>№{player.jerseyNumber ?? '—'}</b> {player.displayName}</span><label className="attendance"><input type="checkbox" checked={player.available} onChange={event => onAvailabilityChange(player.id, event.target.checked)}/><span>В матче</span></label><select aria-label={`Роль ${player.displayName}`} value={player.matchRole} disabled={!player.available} onChange={event => onRoleChange(player.id, event.target.value)}><option value="player">Игрок</option><option value="setter">Связующий</option><option value="libero">Либеро</option></select><button type="button" className={`starter-toggle ${player.starter ? 'active' : ''}`} disabled={!player.available} onClick={() => onStarterChange(player.id)}>{player.starter ? 'В старте' : 'Запас'}</button></div>)}</div>{!rosterReady(roster) && <div className="team-lineup-warning">Нужно: 6 полевых + 1 либеро в старте и минимум 1 связующий среди участников</div>}</div>
 }
 
 function Prepare({ onCancel, onCreated }) {
@@ -89,8 +106,8 @@ function Prepare({ onCancel, onCreated }) {
       const [rawA, rawB] = mode === 'demo'
         ? [demoRoster(teamA, season, aSnapshot), demoRoster(teamB, season, bSnapshot)]
         : await Promise.all([sourceReader.getTeamRoster({ teamId: teamA, seasonId: season }), sourceReader.getTeamRoster({ teamId: teamB, seasonId: season })])
-      const rosterA = (mode === 'demo' ? rawA : mapRoster(rawA, { teamId: teamA, seasonId: season, teamSnapshotId: aSnapshot })).map(p => ({ ...p, matchRole: normalizeMatchRole(p.matchRole) }))
-      const rosterB = (mode === 'demo' ? rawB : mapRoster(rawB, { teamId: teamB, seasonId: season, teamSnapshotId: bSnapshot })).map(p => ({ ...p, matchRole: normalizeMatchRole(p.matchRole) }))
+      const rosterA = initializeMatchRoster(mode === 'demo' ? rawA : mapRoster(rawA, { teamId: teamA, seasonId: season, teamSnapshotId: aSnapshot }))
+      const rosterB = initializeMatchRoster(mode === 'demo' ? rawB : mapRoster(rawB, { teamId: teamB, seasonId: season, teamSnapshotId: bSnapshot }))
       if (!rosterA.length || !rosterB.length) throw new Error('В одной из команд нет доступного состава')
       const teamsLocal = [{ id: aSnapshot, sourceTeamId: teamA, name: teamLabel(teams.find(t => t.id === teamA)) }, { id: bSnapshot, sourceTeamId: teamB, name: teamLabel(teams.find(t => t.id === teamB)) }]
       setPrepared({ matchId, aSnapshot, bSnapshot, teamsLocal, rosterA, rosterB })
@@ -99,27 +116,33 @@ function Prepare({ onCancel, onCreated }) {
   function updateRole(rosterKey, playerId, matchRole) {
     setPrepared(current => ({ ...current, [rosterKey]: current[rosterKey].map(p => p.id === playerId ? { ...p, matchRole } : p) }))
   }
+  function updateAvailability(rosterKey, playerId, available) {
+    setPrepared(current => ({ ...current, [rosterKey]: current[rosterKey].map(player => player.id === playerId ? { ...player, available, starter: available ? player.starter : false } : player) }))
+  }
+  function updateStarter(rosterKey, playerId) {
+    setPrepared(current => ({ ...current, [rosterKey]: current[rosterKey].map(player => player.id === playerId ? { ...player, starter: player.available ? !player.starter : false } : player) }))
+  }
   async function create() {
     if (!prepared) return
     const { matchId, aSnapshot, bSnapshot, teamsLocal, rosterA, rosterB } = prepared
-    const selectedA = rosterA.filter(p => p.active).slice(0, 6); const selectedB = rosterB.filter(p => p.active).slice(0, 6)
-    if (selectedA.length < 6 || selectedB.length < 6) { setError('Для старта нужно минимум 6 активных игроков в каждой команде'); return }
-    if (!rosterA.some(p => p.active && p.matchRole === 'setter') || !rosterB.some(p => p.active && p.matchRole === 'setter')) { setError('Отметьте минимум одного связующего в каждой команде'); return }
+    if (!rosterReady(rosterA) || !rosterReady(rosterB)) { setError('Для каждой команды выберите участников, шесть полевых и одного либеро в старт, а также минимум одного связующего'); return }
+    const matchRosterA = rosterA.map(player => ({ ...player, active: player.active && player.available })); const matchRosterB = rosterB.map(player => ({ ...player, active: player.active && player.available }))
+    const selectedA = matchRosterA.filter(player => player.active && player.starter && player.matchRole !== 'libero'); const selectedB = matchRosterB.filter(player => player.active && player.starter && player.matchRole !== 'libero')
     setLoading(true); setError('')
     try {
-      let loaded = await commitCommand(makeCommand(CommandType.CREATE_MATCH, matchId, 0, { meta: { title: `${teamsLocal[0].name} — ${teamsLocal[1].name}`, sourceLeague: league, sourceSeasonId: season, environment: 'lab' }, rules: { setsToWin: 3, regularTarget: 25, decidingTarget: 15, advantage: 2 }, teams: teamsLocal, roster: [...rosterA, ...rosterB] }))
+      let loaded = await commitCommand(makeCommand(CommandType.CREATE_MATCH, matchId, 0, { meta: { title: `${teamsLocal[0].name} — ${teamsLocal[1].name}`, sourceLeague: league, sourceSeasonId: season, environment: 'lab' }, rules: { setsToWin: 3, regularTarget: 25, decidingTarget: 15, advantage: 2 }, teams: teamsLocal, roster: [...matchRosterA, ...matchRosterB] }))
       loaded = await commitCommand(makeCommand(CommandType.START_SET, matchId, loaded.meta.revision, { servingTeamId: serving === 'A' ? aSnapshot : bSnapshot, lineups: { [aSnapshot]: selectedA.map(p => p.id), [bSnapshot]: selectedB.map(p => p.id) } }))
       onCreated(loaded)
     } catch (e) { setError(e.message) } finally { setLoading(false) }
   }
-  const rolesReady = prepared && prepared.rosterA.some(p => p.active && p.matchRole === 'setter') && prepared.rosterB.some(p => p.active && p.matchRole === 'setter')
+  const rolesReady = prepared && rosterReady(prepared.rosterA) && rosterReady(prepared.rosterB)
   return <main className="page narrow"><button className="back" onClick={onCancel}>← К матчам</button><div className="title"><p className="eyebrow">Подготовка</p><h1>Новый тестовый матч</h1></div>
     <div className="mode-tabs"><button className={mode === 'source' ? 'active' : ''} disabled={!sourceReader} onClick={() => { setPrepared(null); setMode('source') }}>Данные VSL</button><button className={mode === 'demo' ? 'active' : ''} onClick={() => { setPrepared(null); setMode('demo') }}>Деморежим</button></div>
     {loading && <Spinner/>}{error && <div className="notice warn">{error}</div>}
     <section className="form-card"><label>Лига<select value={league} onChange={e => { setPrepared(null); setLeague(e.target.value) }}>{leagues.map(l => <option key={l.id} value={l.name}>{l.display_name}</option>)}</select></label><label>Сезон<select value={season} onChange={e => { setPrepared(null); setSeason(e.target.value) }}>{seasons.map(s => <option key={s.id} value={s.id}>{s.name}{s.is_current ? ' · текущий' : ''}</option>)}</select></label>
       <div className="versus"><label>Команда 1<select value={teamA} onChange={e => { setPrepared(null); setTeamA(e.target.value) }}>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label><b>VS</b><label>Команда 2<select value={teamB} onChange={e => { setPrepared(null); setTeamB(e.target.value) }}>{teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}</select></label></div>
       <fieldset><legend>Кто подаёт первым</legend><label className="radio"><input type="radio" checked={serving === 'A'} onChange={() => setServing('A')}/>{teams.find(t => t.id === teamA)?.name || 'Команда 1'}</label><label className="radio"><input type="radio" checked={serving === 'B'} onChange={() => setServing('B')}/>{teams.find(t => t.id === teamB)?.name || 'Команда 2'}</label></fieldset>
-      {!prepared ? <button className="primary wide" disabled={loading || !teams.length} onClick={prepareRosters}>Загрузить составы и роли</button> : <><div className="role-review"><div className="role-review-head"><div><p className="eyebrow">Обязательный шаг</p><h2>Проверьте игровые роли</h2></div><button className="ghost" onClick={prepareRosters}>Обновить составы</button></div><p>Отметьте минимум одного связующего в каждой команде. Связующие будут первыми в выборе результативного паса. Роли сохранятся только в этом тестовом матче.</p><RoleRoster roster={prepared.rosterA} team={prepared.teamsLocal[0]} onRoleChange={(playerId, role) => updateRole('rosterA', playerId, role)}/><RoleRoster roster={prepared.rosterB} team={prepared.teamsLocal[1]} onRoleChange={(playerId, role) => updateRole('rosterB', playerId, role)}/>{!rolesReady && <div className="role-required">Нужно выбрать связующего в каждой команде</div>}</div><button className="primary wide" disabled={loading || !rolesReady} onClick={create}>Начать тестовый матч</button></>}
+      {!prepared ? <button className="primary wide" disabled={loading || !teams.length} onClick={prepareRosters}>Загрузить составы и роли</button> : <><div className="role-review"><div className="role-review-head"><div><p className="eyebrow">Обязательный шаг</p><h2>Участники и стартовый состав</h2></div><button className="ghost" onClick={prepareRosters}>Обновить составы</button></div><p>Уберите отсутствующих, проверьте амплуа и выберите старт: шесть полевых игроков плюс один либеро. Эти настройки сохранятся только в тестовом матче.</p><RoleRoster roster={prepared.rosterA} team={prepared.teamsLocal[0]} onRoleChange={(playerId, role) => updateRole('rosterA', playerId, role)} onAvailabilityChange={(playerId, available) => updateAvailability('rosterA', playerId, available)} onStarterChange={playerId => updateStarter('rosterA', playerId)}/><RoleRoster roster={prepared.rosterB} team={prepared.teamsLocal[1]} onRoleChange={(playerId, role) => updateRole('rosterB', playerId, role)} onAvailabilityChange={(playerId, available) => updateAvailability('rosterB', playerId, available)} onStarterChange={playerId => updateStarter('rosterB', playerId)}/>{!rolesReady && <div className="role-required">Для обеих команд нужен старт 6+1 и минимум один связующий</div>}</div><button className="primary wide" disabled={loading || !rolesReady} onClick={create}>Начать тестовый матч</button></>}
       <p className="privacy-note">Снимок и статистика сохраняются в отдельной тестовой таблице. Рабочие данные VSL не изменятся.</p>
     </section>
   </main>
@@ -127,7 +150,13 @@ function Prepare({ onCancel, onCreated }) {
 
 function Capture({ loaded, onReload, onHome }) {
   const { state, commands, meta } = loaded; const set = state.sets.at(-1); const [selected, setSelected] = useState(null); const [teamId, setTeamId] = useState(state.teams[0].id); const [save, setSave] = useState(loaded.sync?.ok === false ? 'server-error' : 'saved'); const [error, setError] = useState(''); const [view, setView] = useState('capture'); const [assistFor, setAssistFor] = useState(null); const [substitute, setSubstitute] = useState(false)
-  const roster = state.roster.filter(p => p.teamId === teamId && p.active); const selectedPlayer = state.roster.find(p => p.id === selected); const score = set?.score || {}
+  const teamRoster = state.roster.filter(player => player.teamId === teamId && player.active); const lineupIds = set?.lineups?.[teamId] || []
+  const currentLibero = teamRoster.find(player => lineupIds.includes(player.id) && player.matchRole === 'libero') || teamRoster.find(player => player.starter && player.matchRole === 'libero') || teamRoster.find(player => player.matchRole === 'libero')
+  const courtPlayers = lineupIds.map(id => teamRoster.find(player => player.id === id)).filter(player => player && player.matchRole !== 'libero')
+  for (const player of teamRoster.filter(candidate => candidate.matchRole !== 'libero' && candidate.starter)) if (courtPlayers.length < 6 && !courtPlayers.some(candidate => candidate.id === player.id)) courtPlayers.push(player)
+  for (const player of teamRoster.filter(candidate => candidate.matchRole !== 'libero')) if (courtPlayers.length < 6 && !courtPlayers.some(candidate => candidate.id === player.id)) courtPlayers.push(player)
+  const roster = [...courtPlayers.slice(0, 6), ...(currentLibero ? [currentLibero] : [])]; const mainIds = new Set(roster.map(player => player.id)); const benchRoster = teamRoster.filter(player => !mainIds.has(player.id))
+  const selectedPlayer = state.roster.find(p => p.id === selected); const score = set?.score || {}
   const selectedTeam = state.teams.find(t => t.id === teamId); const opponentTeam = state.teams.find(t => t.id !== teamId)
   const assistCandidates = assistFor ? roster.filter(p => p.id !== state.events.find(e => e.id === assistFor)?.actorId).sort((a, b) => Number(b.matchRole === 'setter') - Number(a.matchRole === 'setter') || (a.jerseyNumber ?? 999) - (b.jerseyNumber ?? 999)) : []
 
@@ -143,7 +172,7 @@ function Capture({ loaded, onReload, onHome }) {
   }
   async function undo() { const target = latestUndoable(commands); if (target) await issue(CommandType.UNDO, { targetCommandId: target.commandId }) }
   async function redo() { const target = latestRedoable(commands); if (target) await issue(CommandType.REDO, { targetCommandId: target.commandId }) }
-  async function newSet() { await issue(CommandType.START_SET, { servingTeamId: state.teams[0].id, lineups: Object.fromEntries(state.teams.map(t => [t.id, state.roster.filter(p => p.teamId === t.id && p.active).slice(0,6).map(p => p.id)])) }) }
+  async function newSet() { await issue(CommandType.START_SET, { servingTeamId: state.teams[0].id, lineups: Object.fromEntries(state.teams.map(team => { const available = state.roster.filter(player => player.teamId === team.id && player.active && player.matchRole !== 'libero'); const starters = available.filter(player => player.starter); return [team.id, (starters.length === 6 ? starters : available.slice(0, 6)).map(player => player.id)] })) }) }
   async function enterLandscape() {
     if (!document.documentElement.requestFullscreen) { setError('На iPhone: «Поделиться» → «На экран Домой», затем откройте приложение с иконки'); return }
     try { if (!document.fullscreenElement) await document.documentElement.requestFullscreen() } catch { setError('Браузер не разрешил полный экран. Добавьте сайт на экран «Домой» и откройте с иконки.') }
@@ -155,7 +184,7 @@ function Capture({ loaded, onReload, onHome }) {
   return <main className="capture-page"><div className="orientation-gate"><b>Поверните телефон горизонтально</b><span>Экран матча работает как единый пульт без прокрутки.</span><button className="primary" onClick={enterLandscape}>Открыть на весь экран</button></div><header className="match-header"><button className="back" onClick={onHome}>← Матчи</button><div><span>Партия {set?.number}</span><h1>{state.meta.title}</h1></div><button className="fullscreen-toggle" aria-label="На весь экран" title="На весь экран" onClick={enterLandscape}>⛶</button><SaveMark status={save}/></header>
     <div className="scoreboard">{state.teams.map(t => <button key={t.id} className={`${teamId === t.id ? 'active' : ''} ${set?.servingTeamId === t.id ? 'serving' : ''}`} onClick={() => { setTeamId(t.id); setSelected(null) }}><span>{t.name}{set?.servingTeamId === t.id ? ' · подача' : ''}</span><b>{score[t.id] || 0}</b><em>R{(set?.rotations[t.id] || 0) + 1}</em></button>)}<div className="set-number">{state.sets.filter(s => s.status === 'completed').length}<small>партий завершено</small></div></div>
     {error && <div className="notice warn compact">{error}</div>}
-    <div className="capture-grid"><section className="players-panel"><div className="panel-title"><h2>Игрок</h2><span>{selectedTeam?.name}</span></div><div className="player-grid">{roster.map(p => <button key={p.id} className={`${selected === p.id ? 'selected' : ''} ${normalizeMatchRole(p.matchRole)}`} onClick={() => setSelected(p.id)}><strong>{p.jerseyNumber ?? '—'}</strong><span>{p.displayName}</span>{p.matchRole === 'libero' && <em className="libero">Л</em>}{p.matchRole === 'setter' && <em className="setter">СВ</em>}</button>)}</div></section>
+    <div className="capture-grid"><section className="players-panel"><div className="panel-title"><h2>На площадке · 6 + либеро</h2><span>{selectedTeam?.name}</span></div><div className="player-grid court-roster">{roster.map(p => <button key={p.id} className={`${selected === p.id ? 'selected' : ''} ${normalizeMatchRole(p.matchRole)}`} onClick={() => setSelected(p.id)}><strong>{p.jerseyNumber ?? '—'}</strong><span>{p.displayName}</span>{p.matchRole === 'libero' && <em className="libero">Л</em>}{p.matchRole === 'setter' && <em className="setter">СВ</em>}</button>)}</div>{benchRoster.length > 0 && <div className="bench-strip"><div className="bench-title"><b>Запасные</b><span>Нажмите игрока для замены</span></div><div className="bench-grid">{benchRoster.map(player => <button key={player.id} onClick={() => setSubstitute(player.id)}><strong>{player.jerseyNumber ?? '—'}</strong><span>{player.displayName}</span>{player.matchRole === 'libero' && <em>Л</em>}</button>)}</div></div>}</section>
       <section className="actions-panel"><div className="selected-player">{selectedPlayer ? <><strong>{playerLabel(selectedPlayer)}</strong><span>{selectedPlayer.matchRole === 'libero' ? 'Либеро: оцените действие' : 'Выберите результат'}</span></> : <><strong>Игрок не выбран</strong><span>Нажмите карточку слева</span></>}</div>
         {selectedPlayer?.matchRole === 'libero' ? <div className="libero-actions"><button className="positive" onClick={() => issue(CommandType.RECORD_LIBERO_ASSESSMENT, { rosterEntryId: selected, sign: 'positive' })}><b>+</b><span>Позитивное</span></button><button className="negative" onClick={() => issue(CommandType.RECORD_LIBERO_ASSESSMENT, { rosterEntryId: selected, sign: 'negative' })}><b>−</b><span>Негативное</span></button></div> : <div className="action-grid"><button onClick={() => terminal('serve','ace')}>🎯 <span>Эйс</span></button><button onClick={() => terminal('attack','point')}>⚡ <span>Атака: очко</span></button><button onClick={() => terminal('block','point')}>🛡 <span>Блок: очко</span></button><button className="error-action" onClick={() => terminal('serve','error', state.teams.find(t => t.id !== teamId).id)}>Подача: ошибка</button><button className="error-action" onClick={() => terminal('attack','error', state.teams.find(t => t.id !== teamId).id)}>Атака: ошибка</button></div>}
         <div className="unknown-actions"><button onClick={() => issue(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: selectedTeam.id })}>Очко {selectedTeam.name}</button><button onClick={() => issue(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: opponentTeam.id })}>Очко {opponentTeam.name}</button></div>
@@ -163,15 +192,23 @@ function Capture({ loaded, onReload, onHome }) {
       <aside className="side-panel"><h2>Последние события</h2><div className="mini-log">{state.events.slice(-7).reverse().map(e => { const p = state.roster.find(x => x.id === e.actorId); return <div key={e.id}><b>{p ? `№${p.jerseyNumber ?? '—'} ${p.displayName}` : e.skill}</b><span>{e.skill === 'libero' ? (e.result === 'positive' ? '+ позитивное' : '− негативное') : `${e.skill} · ${e.result}`}</span></div> })}</div></aside>
     </div>
     {assistFor && <div className="assist-drawer"><div><b>Кто отдал результативный пас?</b><span>Связующие выделены и показаны первыми. Очко уже записано.</span></div><div className="assist-players">{assistCandidates.map(p => <button key={p.id} className={p.matchRole === 'setter' ? 'setter-candidate' : ''} onClick={async () => { await issue(CommandType.ASSIGN_ASSIST, { attackEventId: assistFor, assisterId: p.id }); setAssistFor(null) }}>{p.matchRole === 'setter' && <small>СВ</small>} №{p.jerseyNumber ?? '—'} {p.displayName}</button>)}<button className="ghost" onClick={async () => { await issue(CommandType.ASSIGN_ASSIST, { attackEventId: assistFor, assisterId: null }); setAssistFor(null) }}>Без ассиста</button><button className="ghost" onClick={() => setAssistFor(null)}>Позже</button></div></div>}
-    {substitute && <Substitution state={state} teamId={teamId} onClose={() => setSubstitute(false)} onApply={async (outId,inId,isLibero) => { await issue(isLibero ? CommandType.REPLACE_LIBERO : CommandType.SUBSTITUTE_PLAYER,{ teamId,outId,inId }); setSubstitute(false) }}/>} 
+    {substitute && <Substitution
+      state={state}
+      teamId={teamId}
+      initialInId={typeof substitute === 'string' ? substitute : null}
+      onClose={() => setSubstitute(false)}
+      onApply={async (outId, inId) => {
+        await issue(CommandType.SUBSTITUTE_PLAYER, { teamId, outId, inId })
+        setSubstitute(false)
+      }}
+    />}
     <nav className="match-nav"><button disabled={!latestUndoable(commands)} onClick={undo}>↶ Отменить</button><button disabled={!latestRedoable(commands)} onClick={redo}>↷ Повторить</button><button onClick={() => setSubstitute(true)}>⇄ Замена</button><button onClick={() => setView('journal')}>Журнал</button><button onClick={() => setView('report')}>Отчёт</button>{set?.status === 'in_progress' ? <button onClick={() => issue(CommandType.FINISH_SET,{})}>Завершить партию</button> : state.status !== 'completed' ? <><button className="primary" onClick={newSet}>Новая партия</button><button onClick={() => issue(CommandType.FINISH_MATCH,{})}>Завершить матч</button></> : null}</nav>
   </main>
 }
 
-function Substitution({ state, teamId, onClose, onApply }) {
-  const set = state.sets.at(-1); const lineup = set.lineups[teamId] || []; const [outId,setOut] = useState(lineup[0] || ''); const bench = state.roster.filter(p => p.teamId === teamId && p.active && !lineup.includes(p.id)); const [inId,setIn] = useState(bench[0]?.id || '')
-  const incoming = state.roster.find(p => p.id === inId)
-  return <div className="modal-backdrop" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}><h2>Замена</h2><label>Уходит<select value={outId} onChange={e=>setOut(e.target.value)}>{lineup.map(id => { const p=state.roster.find(x=>x.id===id); return <option key={id} value={id}>{playerLabel(p)}</option> })}</select></label><label>Выходит<select value={inId} onChange={e=>setIn(e.target.value)}>{bench.map(p=><option key={p.id} value={p.id}>{playerLabel(p)}</option>)}</select></label><div className="modal-actions"><button className="ghost" onClick={onClose}>Отмена</button><button className="primary" disabled={!inId} onClick={()=>onApply(outId,inId,incoming?.matchRole==='libero')}>Применить</button></div></div></div>
+function Substitution({ state, teamId, initialInId, onClose, onApply }) {
+  const set = state.sets.at(-1); const lineup = (set.lineups[teamId] || []).filter(id => state.roster.find(player => player.id === id)?.matchRole !== 'libero'); const [outId,setOut] = useState(lineup[0] || ''); const bench = state.roster.filter(player => player.teamId === teamId && player.active && player.matchRole !== 'libero' && !lineup.includes(player.id)); const [inId,setIn] = useState(bench.some(player => player.id === initialInId) ? initialInId : bench[0]?.id || '')
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal" onClick={e => e.stopPropagation()}><h2>Замена полевого игрока</h2><label>Уходит с площадки<select value={outId} onChange={e=>setOut(e.target.value)}>{lineup.map(id => { const p=state.roster.find(x=>x.id===id); return <option key={id} value={id}>{playerLabel(p)}</option> })}</select></label><label>Выходит из запаса<select value={inId} onChange={e=>setIn(e.target.value)}>{bench.map(p=><option key={p.id} value={p.id}>{playerLabel(p)}</option>)}</select></label><div className="modal-actions"><button className="ghost" onClick={onClose}>Отмена</button><button className="primary" disabled={!inId || !outId} onClick={()=>onApply(outId,inId)}>Применить</button></div></div></div>
 }
 
 function Journal({ state, onBack }) { const rows = buildJournalRows(state); return <main className="page"><button className="back" onClick={onBack}>← К матчу</button><div className="title"><p className="eyebrow">Проверка записи</p><h1>Журнал розыгрышей</h1><p className="journal-help">Каждая строка показывает счёт после розыгрыша, автора очка и результативный пас.</p></div><div className="journal">{rows.length ? rows.map(row => <article key={row.id}><div className="journal-rally"><strong>Партия {row.setNumber} · розыгрыш {row.number}</strong><span>{row.scoreWithTeams}</span></div><div className="journal-winner"><small>Розыгрыш взяла</small><b>{row.winnerName}</b><em>{row.scoreLabel}</em></div><div className="journal-action">{row.actionLines.map((line, index) => <span key={index}>{line}</span>)}{row.administrative && <small>Административное очко</small>}</div></article>) : <div className="empty">Розыгрышей пока нет.</div>}</div></main> }
@@ -186,5 +223,5 @@ export default function App() {
   async function reload(next){ const value=next||await loadMatch(loaded.state.id); setLoaded(value); await refreshList() }
   async function remove(id){ if(!confirm('Удалить тестовый матч с сервера и этого устройства? Сначала сохраните JSON-копию, если она нужна.'))return; await deleteLocalMatch(id); await refreshList() }
   async function importFile(e){ const file=e.target.files?.[0]; if(!file)return; try{const text=await file.text(); const bundle=validateBundle(JSON.parse(text),file.size); const value=await importMatchBundle(bundle); await refreshList();setLoaded(value);setScreen('capture')}catch(error){setFatal(error.message)}finally{e.target.value=''} }
-  return <><LabBanner/><UpdateBanner matchActive={screen==='capture'&&loaded?.state.status==='in_progress'}/>{fatal&&<div className="fatal"><span>{fatal}</span><button onClick={()=>setFatal('')}>×</button></div>}{screen==='home'&&<Home matches={matches} onNew={()=>setScreen('prepare')} onOpen={open} onImport={importFile} onDelete={remove}/>} {screen==='prepare'&&<Prepare onCancel={()=>setScreen('home')} onCreated={value=>{setLoaded(value);setScreen('capture')}}/>}{screen==='capture'&&loaded&&<Capture loaded={loaded} onReload={reload} onHome={async()=>{await refreshList();setScreen('home')}}/>}</>
+  return <><UpdateBanner matchActive={screen==='capture'&&loaded?.state.status==='in_progress'}/>{fatal&&<div className="fatal"><span>{fatal}</span><button onClick={()=>setFatal('')}>×</button></div>}{screen==='home'&&<Home matches={matches} onNew={()=>setScreen('prepare')} onOpen={open} onImport={importFile} onDelete={remove}/>} {screen==='prepare'&&<Prepare onCancel={()=>setScreen('home')} onCreated={value=>{setLoaded(value);setScreen('capture')}}/>}{screen==='capture'&&loaded&&<Capture loaded={loaded} onReload={reload} onHome={async()=>{await refreshList();setScreen('home')}}/>}</>
 }
