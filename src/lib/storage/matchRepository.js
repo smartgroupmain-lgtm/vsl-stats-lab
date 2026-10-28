@@ -1,5 +1,6 @@
 import { dbPromise } from './db.js'
 import { replay } from '../match-engine/replay.js'
+import { applyCommand } from '../match-engine/reducer.js'
 import { deleteRemoteMatch, listRemoteMatches, loadRemoteMatch, remoteSyncEnabled, saveRemoteMatch } from './remoteMatchRepository.js'
 
 export class RevisionConflict extends Error { constructor(currentRevision) { super('Матч изменён в другой вкладке'); this.currentRevision = currentRevision } }
@@ -9,7 +10,27 @@ async function withEditorLock(matchId, fn) {
   return fn()
 }
 
-export async function commitCommand(command) {
+const remoteQueues = new Map()
+function queueRemoteSync(loaded, onSync) {
+  let queue = remoteQueues.get(loaded.state.id)
+  if (!queue) { queue = { latest: null, listeners: new Set(), running: false }; remoteQueues.set(loaded.state.id, queue) }
+  queue.latest = loaded
+  if (onSync) queue.listeners.add(onSync)
+  if (queue.running) return
+  queue.running = true
+  void (async () => {
+    let result = { ok: true }
+    while (queue.latest) {
+      const current = queue.latest; queue.latest = null
+      try { result = await saveRemoteMatch(current) }
+      catch (error) { result = { ok: false, error: error.message } }
+    }
+    queue.running = false; remoteQueues.delete(loaded.state.id)
+    for (const listener of queue.listeners) listener(result)
+  })()
+}
+
+export async function commitCommand(command, { onSync } = {}) {
   return withEditorLock(command.matchId, async () => {
     const db = await dbPromise
     const tx = db.transaction(['matches', 'commands', 'snapshots', 'rosterSnapshots'], 'readwrite')
@@ -19,9 +40,11 @@ export async function commitCommand(command) {
     const currentRevision = meta?.revision || 0
     if (command.expectedRevision !== currentRevision) { tx.abort(); throw new RevisionConflict(currentRevision) }
     const existing = await tx.objectStore('commands').index('matchId').getAll(command.matchId)
+    const snapshot = await tx.objectStore('snapshots').get(command.matchId)
     const record = { ...command, revision: currentRevision + 1 }
     const commands = [...existing, record].sort((a, b) => a.revision - b.revision)
-    const state = replay(commands)
+    const canApplyIncrementally = snapshot?.revision === currentRevision && !['UNDO', 'REDO'].includes(command.type)
+    const state = canApplyIncrementally ? applyCommand(snapshot.state, record).nextState : replay(commands)
     meta = { id: command.matchId, revision: currentRevision + 1, status: state.status, updatedAt: state.updatedAt || command.recordedAt, createdAt: meta?.createdAt || command.recordedAt, title: state.meta?.title || 'Тестовый матч', sourceMatchId: state.meta?.sourceMatchId || null }
     await tx.objectStore('commands').add(record)
     await tx.objectStore('matches').put(meta)
@@ -29,8 +52,9 @@ export async function commitCommand(command) {
     if (command.type === 'CREATE_MATCH') for (const entry of state.roster) await tx.objectStore('rosterSnapshots').put({ ...entry, matchId: command.matchId })
     await tx.done
     const loaded = { meta, commands, state }
-    try { return { ...loaded, sync: await saveRemoteMatch(loaded) } }
-    catch (error) { return { ...loaded, sync: { ok: false, error: error.message } } }
+    if (!remoteSyncEnabled()) return { ...loaded, sync: { ok: true, skipped: true } }
+    queueRemoteSync(loaded, onSync)
+    return { ...loaded, sync: { pending: true } }
   })
 }
 

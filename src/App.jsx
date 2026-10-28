@@ -49,7 +49,7 @@ const detailedActions = {
 const skillLabels = { serve: 'Подача', reception: 'Приём', set: 'Пас', attack: 'Атака', block: 'Блок' }
 
 function Spinner() { return <div className="spinner" aria-label="Загрузка" /> }
-function SaveMark({ status }) { return <span className={`save-mark ${status}`}>{status === 'saving' ? 'Сохраняется…' : status === 'server-error' ? 'На устройстве · сервер недоступен' : status === 'error' ? 'Не сохранено' : 'Сохранено на сервере'}</span> }
+function SaveMark({ status }) { return <span className={`save-mark ${status}`}>{status === 'saving' ? 'На устройстве · отправляется…' : status === 'server-error' ? 'На устройстве · сервер недоступен' : status === 'error' ? 'Не сохранено' : 'Сохранено на сервере'}</span> }
 
 function Home({ matches, onNew, onOpen, onImport, onDelete }) {
   return <main className="page narrow">
@@ -172,7 +172,7 @@ function QuickCapture({ loaded, onReload, onHome }) {
 
   async function issue(type, payload) {
     setSave('saving'); setError('')
-    try { const next = await commitCommand(makeCommand(type, state.id, meta.revision, payload)); setSave(next.sync?.ok === false ? 'server-error' : 'saved'); setSelected(null); await onReload(next); return next }
+    try { const next = await commitCommand(makeCommand(type, state.id, meta.revision, payload), { onSync: result => setSave(result.ok === false ? 'server-error' : 'saved') }); setSave(next.sync?.pending ? 'saving' : next.sync?.ok === false ? 'server-error' : 'saved'); setSelected(null); await onReload(next); return next }
     catch (e) { setSave('error'); setError(e.message); return null }
   }
   async function terminal(skill, result, winnerTeamId = teamId) {
@@ -231,7 +231,7 @@ function DetailedCapture({ loaded, onReload, onHome }) {
   const [selected, setSelected] = useState(null); const [teamId, setTeamId] = useState(state.teams[0].id); const [skill, setSkill] = useState('serve'); const [save, setSave] = useState(loaded.sync?.ok === false ? 'server-error' : 'saved'); const [error, setError] = useState(''); const [view, setView] = useState('capture'); const [substitute, setSubstitute] = useState(false)
   const { main: roster, bench: benchRoster } = activeRosterFor(state, set, teamId); const selectedPlayer = state.roster.find(player => player.id === selected); const score = set?.score || {}; const selectedTeam = state.teams.find(team => team.id === teamId); const opponentTeam = state.teams.find(team => team.id !== teamId)
   const currentRally = (set?.rallies.length || 0) + 1; const sequence = state.events.filter(event => !event.voided && event.setId === set?.id && event.rallyNumber === currentRally && !['substitution', 'libero-replacement'].includes(event.skill))
-  async function issue(type, payload) { setSave('saving'); setError(''); try { const next = await commitCommand(makeCommand(type, state.id, meta.revision, payload)); setSave(next.sync?.ok === false ? 'server-error' : 'saved'); setSelected(null); await onReload(next); return next } catch (e) { setSave('error'); setError(e.message); return null } }
+  async function issue(type, payload) { setSave('saving'); setError(''); try { const next = await commitCommand(makeCommand(type, state.id, meta.revision, payload), { onSync: result => setSave(result.ok === false ? 'server-error' : 'saved') }); setSave(next.sync?.pending ? 'saving' : next.sync?.ok === false ? 'server-error' : 'saved'); setSelected(null); await onReload(next); return next } catch (e) { setSave('error'); setError(e.message); return null } }
   async function record(result) { if (!selected) { setError('Сначала выберите игрока'); return } await issue(CommandType.RECORD_DETAILED_ACTION, { actorId: selected, teamId, skill, result }) }
   async function undo() { const target = latestUndoable(commands); if (target) await issue(CommandType.UNDO, { targetCommandId: target.commandId }) }
   async function redo() { const target = latestRedoable(commands); if (target) await issue(CommandType.REDO, { targetCommandId: target.commandId }) }
@@ -269,7 +269,7 @@ export default function App() {
   async function refreshList(){ setMatches(await listLocalMatches()) }
   useEffect(()=>{ refreshList().catch(e=>setFatal(e.message)) },[])
   async function open(id){ const match=await loadMatch(id); if(match){setLoaded(match);setScreen('capture')} }
-  async function reload(next){ const value=next||await loadMatch(loaded.state.id); setLoaded(value); await refreshList() }
+  async function reload(next){ const value=next||await loadMatch(loaded.state.id); setLoaded(value); if(!next) await refreshList() }
   async function remove(id){ if(!confirm('Удалить тестовый матч с сервера и этого устройства? Сначала сохраните JSON-копию, если она нужна.'))return; await deleteLocalMatch(id); await refreshList() }
   async function importFile(e){ const file=e.target.files?.[0]; if(!file)return; try{const text=await file.text(); const bundle=validateBundle(JSON.parse(text),file.size); const value=await importMatchBundle(bundle); await refreshList();setLoaded(value);setScreen('capture')}catch(error){setFatal(error.message)}finally{e.target.value=''} }
   return <><UpdateBanner matchActive={screen==='capture'&&loaded?.state.status==='in_progress'}/>{fatal&&<div className="fatal"><span>{fatal}</span><button onClick={()=>setFatal('')}>×</button></div>}{screen==='home'&&<Home matches={matches} onNew={()=>setScreen('prepare')} onOpen={open} onImport={importFile} onDelete={remove}/>} {screen==='prepare'&&<Prepare onCancel={()=>setScreen('home')} onCreated={value=>{setLoaded(value);setScreen('capture')}}/>}{screen==='capture'&&loaded&&<Capture loaded={loaded} onReload={reload} onHome={async()=>{await refreshList();setScreen('home')}}/>}</>
