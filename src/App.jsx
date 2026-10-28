@@ -162,7 +162,7 @@ function Capture({ loaded, onReload, onHome }) {
 
   async function issue(type, payload) {
     setSave('saving'); setError('')
-    try { const next = await commitCommand(makeCommand(type, state.id, meta.revision, payload)); setSave(next.sync?.ok === false ? 'server-error' : 'saved'); if (next.sync?.ok === false) setError(next.sync.error); setSelected(null); await onReload(next); return next }
+    try { const next = await commitCommand(makeCommand(type, state.id, meta.revision, payload)); setSave(next.sync?.ok === false ? 'server-error' : 'saved'); setSelected(null); await onReload(next); return next }
     catch (e) { setSave('error'); setError(e.message); return null }
   }
   async function terminal(skill, result, winnerTeamId = teamId) {
