@@ -20,7 +20,7 @@ export default defineConfig({
         name: 'VSL Stats Lab', short_name: 'Stats Lab',
         description: 'Тестовый локальный учёт статистики волейбольного матча',
         theme_color: '#09111f', background_color: '#09111f',
-        display: 'standalone', orientation: 'any', scope: publicBase, start_url: publicBase,
+        display: 'standalone', orientation: 'landscape', scope: publicBase, start_url: publicBase,
       },
       workbox: { navigateFallback: `${publicBase}index.html`, cleanupOutdatedCaches: true },
     }),
