@@ -109,7 +109,7 @@ export function applyCommand(input, command) {
       const index = lineup.indexOf(p.outId)
       if (index < 0 || lineup.includes(p.inId)) throw new DomainError('BAD_SUBSTITUTION', 'Замена не соответствует текущему составу')
       lineup[index] = p.inId; set.lineups[p.teamId] = lineup
-      state.events.push({ id: `${command.commandId}:event`, sourceCommandId: command.commandId, setId: set.id, teamId: p.teamId, skill: command.type === CommandType.REPLACE_LIBERO ? 'libero-replacement' : 'substitution', result: 'completed', outId: p.outId, inId: p.inId, recordedAt: command.recordedAt })
+      state.events.push({ id: `${command.commandId}:event`, sourceCommandId: command.commandId, setId: set.id, rallyNumber: set.rallies.length + 1, scoreAtEvent: { ...set.score }, teamId: p.teamId, skill: command.type === CommandType.REPLACE_LIBERO ? 'libero-replacement' : 'substitution', result: 'completed', outId: p.outId, inId: p.inId, recordedAt: command.recordedAt })
       break
     }
     case CommandType.RECORD_TIMEOUT: state.timeouts.push({ setId: currentSet(state).id, teamId: p.teamId, recordedAt: command.recordedAt }); break

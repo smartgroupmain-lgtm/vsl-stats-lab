@@ -10,6 +10,7 @@ const roster = [
   { id: 'p1', teamId: 'A', displayName: 'Attacker', jerseyNumber: 1, matchRole: 'player' },
   { id: 'p2', teamId: 'A', displayName: 'Setter', jerseyNumber: 2, matchRole: 'setter' },
   { id: 'p3', teamId: 'A', displayName: 'Libero', jerseyNumber: 3, matchRole: 'libero' },
+  { id: 'p4', teamId: 'A', displayName: 'Reserve', jerseyNumber: 5, matchRole: 'player' },
   { id: 'q1', teamId: 'B', displayName: 'Opponent', jerseyNumber: 4, matchRole: 'player' },
 ]
 const command = (type, payload = {}, commandId = crypto.randomUUID()) => ({ commandId, matchId: 'm', type, payload, recordedAt: '2026-10-28T10:00:00Z' })
@@ -124,5 +125,13 @@ describe('match engine', () => {
       const state = applyCommand(initial(), command(CommandType.RECORD_DETAILED_ACTION, { actorId: 'p1', teamId: 'A', skill, result })).nextState
       expect(state.sets[0].score[winner], `${skill}:${result}`).toBe(1)
     }
+  })
+  it('shows a substitution in the journal with score and both players', () => {
+    let state = initial('A')
+    state = applyCommand(state, command(CommandType.RECORD_UNKNOWN_POINT, { winnerTeamId: 'A' }, 'point')).nextState
+    state = applyCommand(state, command(CommandType.SUBSTITUTE_PLAYER, { teamId: 'A', outId: 'p1', inId: 'p4' }, 'change')).nextState
+    const change = buildJournalRows(state).find(row => row.kind === 'substitution')
+    expect(change).toMatchObject({ kind: 'substitution', setNumber: 1, number: 2, scoreLabel: '1 : 0', winnerName: 'A' })
+    expect(change.actionLines).toEqual(['Ушёл: №1 Attacker', 'Вышел: №5 Reserve'])
   })
 })

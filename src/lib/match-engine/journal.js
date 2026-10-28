@@ -34,11 +34,12 @@ export function buildJournalRows(state) {
   const teamNames = Object.fromEntries(state.teams.map(team => [team.id, team.name]))
   return state.sets.flatMap(set => {
     const runningScore = Object.fromEntries(state.teams.map(team => [team.id, 0]))
-    return set.rallies.filter(rally => !rally.voided).map(rally => {
+    const rallyRows = set.rallies.filter(rally => !rally.voided).map(rally => {
       runningScore[rally.winnerTeamId] = (runningScore[rally.winnerTeamId] || 0) + 1
       const scoreAfter = rally.scoreAfter || { ...runningScore }
       return {
         ...rally,
+        kind: 'rally',
         setNumber: set.number,
         winnerName: teamNames[rally.winnerTeamId] || 'Команда',
         scoreAfter,
@@ -47,5 +48,22 @@ export function buildJournalRows(state) {
         actionLines: actionLines(rally, eventsById[rally.eventId], rosterById, state.events.filter(event => !event.voided && event.setId === set.id && event.rallyNumber === rally.number && !['substitution', 'libero-replacement'].includes(event.skill))),
       }
     })
+    const changeRows = state.events.filter(event => !event.voided && event.setId === set.id && ['substitution', 'libero-replacement'].includes(event.skill)).map(event => {
+      const priorRallies = set.rallies.filter(rally => !rally.voided && rally.recordedAt <= event.recordedAt)
+      const scoreAfter = event.scoreAtEvent || priorRallies.at(-1)?.scoreAfter || Object.fromEntries(state.teams.map(team => [team.id, 0]))
+      return {
+        id: event.id,
+        kind: 'substitution',
+        setNumber: set.number,
+        number: event.rallyNumber || priorRallies.length + 1,
+        winnerName: teamNames[event.teamId] || 'Команда',
+        scoreAfter,
+        scoreLabel: `${scoreAfter[state.teams[0].id] || 0} : ${scoreAfter[state.teams[1].id] || 0}`,
+        actionLines: [`Ушёл: ${playerText(rosterById[event.outId])}`, `Вышел: ${playerText(rosterById[event.inId])}`],
+        recordedAt: event.recordedAt,
+        liberoReplacement: event.skill === 'libero-replacement',
+      }
+    })
+    return [...rallyRows, ...changeRows].sort((a, b) => a.recordedAt.localeCompare(b.recordedAt))
   }).reverse()
 }
