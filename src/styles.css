@@ -27,3 +27,5 @@
 
 @media(max-width:680px){.role-player{grid-template-columns:minmax(0,1fr) 112px 70px}.role-player>span{grid-column:1/-1}.role-player .attendance{padding-left:3px}.starter-toggle{height:34px}}
 @media (orientation:landscape) and (max-height:600px){.capture-page{height:100dvh}.court-roster{height:calc(100% - 68px)}.bench-strip{height:47px;margin-top:3px;padding-top:3px}.bench-title{height:11px;margin-bottom:2px}.bench-title b{font-size:8px}.bench-title span{font-size:7px}.bench-grid{grid-template-columns:repeat(auto-fit,minmax(40px,1fr));gap:2px}.bench-grid button{height:29px;padding:2px 4px;border-radius:5px}.bench-grid button strong{font-size:10px}.bench-grid button span{margin-top:1px;font-size:6px}}
+
+.notice.dismissible{display:flex;align-items:center;gap:10px}.notice.dismissible span{flex:1}.notice.dismissible button{width:28px;height:28px;flex:0 0 28px;border-radius:8px;background:rgba(255,255,255,.09);color:inherit;font-size:18px;line-height:1}
